@@ -6,6 +6,17 @@ import { connectDB } from '../config/db.js';
 import User from '../models/User.js';
 import Campus from '../models/Campus.js';
 
+/**
+ * Demo coordinates for the 3 MAIN campus bins. Set SEED_BIN_COORDS=1 to
+ * stamp them at seed time so the Campus Map lights up immediately on a
+ * fresh deployment.
+ */
+const SEED_BIN_COORDS = [
+  { building: 'Block A', floor: 'Ground', binId: 'A-G-01', lat: 12.9716, lng: 77.5946 },
+  { building: 'Block A', floor: '1st',    binId: 'A-1-02', lat: 12.9719, lng: 77.5950 },
+  { building: 'Block B', floor: 'Ground', binId: 'B-G-01', lat: 12.9712, lng: 77.5940 },
+];
+
 async function run() {
   await connectDB();
   console.log('[seed] starting');
@@ -49,6 +60,24 @@ async function run() {
   staff.campusIds = [campus._id];
   user.campusIds = [campus._id];
   await Promise.all([admin.save(), staff.save(), user.save()]);
+
+  // ponytail: optional flag, only when an operator sets SEED_BIN_COORDS=1.
+  if (process.env.SEED_BIN_COORDS === '1') {
+    let updated = 0;
+    for (const want of SEED_BIN_COORDS) {
+      const idx = campus.bins.findIndex(
+        b => b.building === want.building && b.floor === want.floor && b.binId === want.binId
+      );
+      if (idx < 0) continue;
+      campus.bins[idx].lat = want.lat;
+      campus.bins[idx].lng = want.lng;
+      updated++;
+    }
+    if (updated) {
+      await campus.save();
+      console.log(`[seed] coords: ${updated} bin(s) placed on the map`);
+    }
+  }
 
   console.log('[seed] done');
   console.log('  admin:  admin@wastewise.local  / password123');

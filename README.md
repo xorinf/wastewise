@@ -139,6 +139,48 @@ curl -XPOST http://localhost:4000/api/requests \
 
 ---
 
+## Deployment
+
+Vercel hosts both the static frontend and the serverless backend in one
+project. The build config is at `/vercel.json`:
+
+- `buildCommand: cd frontend && npm install --no-audit --no-fund && npm run build`
+- `outputDirectory: frontend/dist` (Vite static)
+- `rewrites`: `/api/*` -> `api/index.js` serverless function; everything else -> `/index.html` (SPA)
+
+`api/index.js` wraps the same Express app the local dev server uses and
+caches the Mongoose connection on `globalThis` so warm starts reuse it.
+
+### Required Vercel env vars (project scope)
+
+Set via the dashboard or the CLI. Never commit them.
+
+| name | purpose |
+|---|---|
+| `MONGO_URI` | Mongo Atlas / self-hosted connection string |
+| `JWT_SECRET` | random 48+ chars; the local dev placeholder is for dev only |
+
+Optional:
+| `CLIENT_ORIGIN` | CORS origin (defaults to `*`) |
+| `CLOUDINARY_*` | image upload destination |
+| `VISION_*`, `GEMINI_*` | Gemini / vision model creds |
+
+### Seeding the deployed database
+
+The seed script defaults to `process.env.MONGO_URI` (then `backend/.env`,
+then local mongod). To seed Atlas from this machine:
+
+```bash
+MONGO_URI="mongodb+srv://user:pass@host/?appName=Cluster0" \
+SEED_BIN_COORDS=1 \
+node backend/src/utils/seed.js
+```
+
+`SEED_BIN_COORDS=1` stamps the 3 demo bins with lat/lng so the Campus Map
+lights up on first load. Idempotent — safe to re-run.
+
+---
+
 ## Notes / known cuts
 
 - The seed creates a fixed staff user who is mapped to `Block A` on `MAIN`. Real campus onboarding is admin-driven: `POST /api/campuses/:id/zone-staff`.
