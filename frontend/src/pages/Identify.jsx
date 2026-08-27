@@ -1,15 +1,28 @@
 import { useEffect, useState } from 'react';
-import { items, campuses as campusApi } from '../api/client';
+import { Link } from 'react-router-dom';
+import { items } from '../api/client';
 import { useAuthStore } from '../store/authStore';
+
+const STATUS_TEXT = {
+  uploading: 'Uploading to image storage…',
+  classifying: 'Asking Gemini to classify…',
+  logging: 'Logging your item…',
+};
 
 export default function Identify() {
   const { selectedCampusId } = useAuthStore();
   const [grid, setGrid] = useState([]);
-  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState(null); // null | 'uploading' | 'classifying' | 'logging'
+  const [previewUrl, setPreviewUrl] = useState(null);
   const [result, setResult] = useState(null);
   const [err, setErr] = useState('');
 
   useEffect(() => { items.quickSelect().then(d => setGrid(d.items)).catch(() => {}); }, []);
+
+  const reset = () => {
+    setErr(''); setResult(null); setStatus(null);
+    if (previewUrl) { URL.revokeObjectURL(previewUrl); setPreviewUrl(null); }
+  };
 
   const upload = async (file) => {
     if (!file) return;
@@ -17,92 +30,258 @@ export default function Identify() {
       setErr('Please select a campus first (top right).');
       return;
     }
-    setErr(''); setBusy(true); setResult(null);
+    reset();
+    setStatus('uploading');
+    setPreviewUrl(URL.createObjectURL(file));
+
     try {
+      // Single request: backend does upload + classify + log in one round-trip.
+      // Image data travels to the backend; it stores it on Cloudinary, calls Gemini,
+      // and (on high confidence) writes the DisposalLog row.
+      setStatus('classifying');
       const fd = new FormData();
       fd.append('image', file);
       fd.append('campusId', selectedCampusId);
       const r = await items.identify(fd);
+
       if (r.lowConfidence) {
-        // Show quick-select with the uploaded image context; user re-picks.
-        setResult({ ...r, mode: 'pickFromPhoto' });
-      } else {
-        await items.log({
-          itemName: r.itemName, category: r.category, campusId: selectedCampusId,
-          source: 'upload', imageUrl: r.imageUrl || '',
-        });
-        setResult({ ...r, mode: 'photo' });
+        // Keep preview + show the suggestions inline so the user picks immediately.
+        setResult({ ...r, mode: 'pickFromPhoto', previewUrl: URL.createObjectURL(file), pendingFile: file });
+        setStatus(null);
+        return;
       }
+
+      setStatus('logging');
+      const log = await items.log({
+        itemName: r.itemName, category: r.category, campusId: selectedCampusId,
+        source: 'upload', imageUrl: r.imageUrl || '',
+      });
+      setResult({ ...r, mode: 'photo', logId: log.log?._id });
+      setStatus(null);
     } catch (e) {
-      setErr(e.response?.data?.error || 'Upload failed');
-    } finally {
-      setBusy(false);
+      setErr(e.response?.data?.error || e.message || 'Upload failed');
+      setStatus(null);
     }
   };
 
-  const pickFromGrid = async (item) => {
+  // Used when the user picks from the grid AFTER uploading a photo.
+  // We log with source='upload' (so it counts as image-driven) and attach the
+  // imageUrl from the previous upload response.
+  const pickFromGrid = async (item, imageUrl = '') => {
     if (!selectedCampusId) { setErr('Please select a campus first (top right).'); return; }
-    setErr(''); setBusy(true); setResult(null);
+    setStatus('logging');
+    setErr('');
     try {
       const r = await items.log({
-        itemName: item.name, category: item.category, campusId: selectedCampusId, source: 'quick_select',
+        itemName: item.name, category: item.category, campusId: selectedCampusId,
+        source: imageUrl ? 'upload' : 'quick_select',
+        imageUrl,
       });
       setResult({
-        ...r.log.toObject?.() || r.log,
-        bin: { color: r.log.binColor },
-        points: r.points,
-        mode: 'quick',
+        itemName: item.name, category: item.category,
+        binColor: r.log.binColor, points: r.points,
+        estimatedKg: r.log.estimatedKg, imageUrl: r.log.imageUrl,
+        mode: 'photo',
       });
     } catch (e) {
       setErr(e.response?.data?.error || 'Logging failed');
     } finally {
-      setBusy(false);
+      setStatus(null);
     }
   };
+
+  // Quick-select is highlighted when the user is in the "pickFromPhoto" state,
+  // so they can pick without losing context.
+  const inPhotoPickMode = result?.mode === 'pickFromPhoto';
+  const pendingImageUrl = result?.imageUrl;
 
   return (
     <main className="max-w-4xl mx-auto px-4 py-8 space-y-6">
       <h1 className="text-2xl font-bold">Identify an item</h1>
 
+      {/* Upload card */}
       <div className="card space-y-3">
         <h2 className="font-semibold">Upload a photo</h2>
-        <input type="file" accept="image/*" disabled={busy}
-          onChange={e => upload(e.target.files[0])} />
-        <p className="text-xs text-gray-500">Image is sent to the vision model. Low-confidence results fall back to the grid below.</p>
+        <input
+          type="file" accept="image/*" disabled={!!status}
+          onChange={e => upload(e.target.files[0])}
+          className="block w-full text-sm text-gray-700 file:mr-3 file:py-2 file:px-4 file:rounded-md file:border file:border-gray-900 file:bg-white file:text-gray-900 hover:file:bg-gray-900 hover:file:text-white"
+        />
+
+        {status && (
+          <div className="flex items-center gap-3 p-3 border border-gray-300 rounded-md bg-gray-50" aria-live="polite">
+            <Spinner />
+            <span className="text-sm text-gray-700">{STATUS_TEXT[status]}</span>
+          </div>
+        )}
+
+        {previewUrl && !status && !result && (
+          <div className="space-y-2">
+            <p className="text-xs text-gray-500">Preview</p>
+            <img src={previewUrl} alt="Uploaded item preview" className="max-h-48 rounded-md border border-gray-200" />
+          </div>
+        )}
+
+        <p className="text-xs text-gray-500">
+          Image goes to Cloudinary, then Gemini classifies it. Low-confidence results fall back to the grid below — you can still pick an item and the photo stays attached.
+        </p>
       </div>
 
+      {/* Result card — shown when we know what was classified */}
+      {result && !status && (
+        <div className="card space-y-3 border-2 border-gray-900">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-xs text-gray-500 uppercase tracking-wide">
+                {result.mode === 'pickFromPhoto' ? 'Pick an item' : 'Classified'}
+              </p>
+              <p className="text-lg mt-1">
+                <strong>{result.itemName || result.message}</strong>
+                {result.binColor && <> · put it in the <strong>{result.binColor}</strong> bin</>}
+              </p>
+              {result.estimatedKg != null && (
+                <p className="text-sm text-gray-600">≈ {result.estimatedKg.toFixed(2)} kg diverted</p>
+              )}
+            </div>
+            {result.imageUrl && (
+              <img src={result.imageUrl} alt="Uploaded item" className="w-20 h-20 rounded-md border border-gray-200 object-cover" />
+            )}
+          </div>
+
+          {result.mode === 'pickFromPhoto' && (
+            <div>
+              <p className="text-sm text-gray-700">{result.message || 'Vision model unsure — pick the closest match below.'}</p>
+              {pendingImageUrl && (
+                <p className="text-xs text-gray-500 mt-1">Your uploaded image will be attached to whichever item you pick.</p>
+              )}
+            </div>
+          )}
+
+          {result.logId && (
+            <p className="text-xs text-gray-500">
+              Logged. <Link to="/history" className="underline">See in My Impact</Link>
+            </p>
+          )}
+
+          <button className="btn !text-sm" onClick={reset}>Identify another</button>
+        </div>
+      )}
+
+      {/* Quick-select grid */}
       <div className="card space-y-3">
-        <h2 className="font-semibold">Quick-select</h2>
+        <h2 className="font-semibold">
+          {inPhotoPickMode ? 'Pick one — photo will be attached' : 'Or quick-select'}
+        </h2>
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
           {grid.map((it) => (
-            <button key={it.name} className="btn !text-sm !py-2" disabled={busy} onClick={() => pickFromGrid(it)}>
+            <button
+              key={it.name}
+              disabled={!!status}
+              onClick={() => pickFromGrid(it, inPhotoPickMode ? pendingImageUrl : '')}
+              className={`btn !text-sm !py-2 ${inPhotoPickMode ? 'border-2 border-gray-900' : ''}`}
+            >
               {it.name}
             </button>
           ))}
         </div>
       </div>
 
-      {err && <p className="text-sm text-red-700">{err}</p>}
+      {/* Custom waste type */}
+      <div className="card space-y-3">
+        <h2 className="font-semibold">Custom waste type</h2>
+        <p className="text-xs text-gray-500">Type any item not in the grid above. Pick the matching category.</p>
+        <CustomForm
+          imageUrl={inPhotoPickMode ? pendingImageUrl : ''}
+          disabled={!!status}
+          busy={status === 'logging'}
+          onLogged={(r) => {
+            setResult({
+              itemName: r.log.itemName, category: r.log.category,
+              binColor: r.log.binColor, points: r.points,
+              estimatedKg: r.log.estimatedKg, imageUrl: r.log.imageUrl,
+              mode: 'photo',
+            });
+            setStatus(null);
+          }}
+          onError={(msg) => { setStatus(null); setErr(msg); }}
+          onStart={() => { setErr(''); setStatus('logging'); }}
+        />
+      </div>
 
-      {result && (
-        <div className="card space-y-2">
-          {result.mode === 'pickFromPhoto' && (
-            <>
-              <p className="font-medium">{result.message}</p>
-              <p className="text-sm text-gray-600">Click an item below to log it with the uploaded image.</p>
-            </>
-          )}
-          {result.itemName && (
-            <>
-              <p className="text-lg">
-                This is a <strong>{result.itemName}</strong>. Put it in the <strong>{result.bin?.color || result.binColor}</strong> bin
-                {result.bin?.reason ? <> because {result.bin.reason}</> : null}.
-              </p>
-              <p className="text-sm text-gray-600">+{result.points || 10} points earned.</p>
-            </>
-          )}
+      {err && (
+        <div className="card border-red-600 space-y-1">
+          <p className="text-sm text-red-700">{err}</p>
+          <p className="text-xs text-gray-500">If this keeps failing, confirm your backend is reachable at /api/health.</p>
         </div>
       )}
     </main>
+  );
+}
+
+function Spinner() {
+  return (
+    <svg className="animate-spin h-5 w-5 text-gray-900" viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" fill="none" strokeDasharray="50 18" />
+    </svg>
+  );
+}
+
+const CATEGORIES = [
+  { value: 'wet_organic', label: 'Wet organic (Green bin)' },
+  { value: 'dry_recyclable', label: 'Dry recyclable (Blue bin)' },
+  { value: 'hazardous_ewaste', label: 'Hazardous / E-waste (Red bin)' },
+  { value: 'reject_other', label: 'General / Reject (Black bin)' },
+];
+
+function CustomForm({ imageUrl, busy, disabled, onLogged, onError, onStart }) {
+  const { selectedCampusId } = useAuthStore();
+  const [name, setName] = useState('');
+  const [category, setCategory] = useState('dry_recyclable');
+
+  const submit = async (e) => {
+    e.preventDefault();
+    const trimmed = name.trim();
+    if (!trimmed) { onError('Type the item name first.'); return; }
+    onStart();
+    try {
+      const r = await items.log({
+        itemName: trimmed,
+        category,
+        campusId: selectedCampusId,
+        source: imageUrl ? 'upload' : 'custom',
+        imageUrl,
+      });
+      setName('');
+      onLogged(r);
+    } catch (err) {
+      onError(err.response?.data?.error || 'Could not save this item.');
+    }
+  };
+
+  return (
+    <form onSubmit={submit} className="space-y-3">
+      <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto_auto] gap-3">
+        <input
+          className="field"
+          placeholder="e.g. coconut shell, takeaway cup, broken mirror"
+          value={name}
+          disabled={disabled}
+          onChange={e => setName(e.target.value)}
+          maxLength={80}
+        />
+        <select
+          className="field !w-auto"
+          value={category}
+          disabled={disabled}
+          onChange={e => setCategory(e.target.value)}
+        >
+          {CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+        </select>
+        <button className="btn btn-primary" disabled={disabled || !name.trim()}>{busy ? '...' : 'Log it'}</button>
+      </div>
+      {imageUrl && (
+        <p className="text-xs text-gray-500">The uploaded image will be attached to this entry.</p>
+      )}
+    </form>
   );
 }

@@ -17,7 +17,7 @@ const DisposalLogSchema = new mongoose.Schema(
     pointsEarned: { type: Number, default: 10 },
     estimatedKg: { type: Number, default: 0 },
     imageUrl: { type: String, default: '' },
-    source: { type: String, enum: ['upload', 'quick_select'], required: true },
+    source: { type: String, enum: ['upload', 'quick_select', 'custom'], required: true },
   },
   { timestamps: true }
 );
