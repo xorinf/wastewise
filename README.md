@@ -98,9 +98,12 @@ Both **Cloudinary** and the **vision model** are stubbed so the app boots and ru
 | Env var | Effect |
 |---|---|
 | `CLOUDINARY_CLOUD_NAME` + `CLOUDINARY_API_KEY` + `CLOUDINARY_API_SECRET` | Image uploads actually go to Cloudinary. Without it, `/api/items/identify` still returns a response so the demo keeps working. |
-| `VISION_API_URL` + `VISION_API_KEY` | The image gets classified. Without it, the API falls back to the quick-select path with `lowConfidence: true`. |
+| `VISION_PROVIDER=gemini` + `GEMINI_API_KEY` (+ optional `GEMINI_MODEL`, default `gemini-flash-latest`) | Gemini is called inline with the uploaded image; the model is prompted to return strict JSON `{name, category, confidence}`. Without these, the API falls back to the quick-select path with `lowConfidence: true`. |
+| `VISION_PROVIDER=generic` + `VISION_API_URL` + `VISION_API_KEY` | Generic OpenAI-compatible endpoint accepting `{image}` and returning `{name, category, confidence}`. |
 
-The expected vision API response shape is `{ name, category, confidence }` where `category` is one of `wet_organic | dry_recyclable | hazardous_ewaste | reject_other`.
+The expected vision response shape is `{ name, category, confidence }` where `category` is one of `wet_organic | dry_recyclable | hazardous_ewaste | reject_other`. The Gemini prompt asks for JSON only and the controller falls back to manual selection when `confidence < 0.6`.
+
+> ⚠️ As of Aug 2026 the `gemini-flash-latest` alias returns 503 for image traffic. Pin `GEMINI_MODEL=gemini-3.6-flash` in `.env` to use the model currently serving image requests.
 
 ---
 
