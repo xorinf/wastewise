@@ -4,11 +4,20 @@ import { useAuthStore } from '../store/authStore';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 
-// Fix default Leaflet marker icons on Vite (assets paths break by default).
-import iconUrl from 'leaflet/dist/images/marker-icon.png';
-import icon2xUrl from 'leaflet/dist/images/marker-icon-2x.png';
-import shadowUrl from 'leaflet/dist/images/marker-shadow.png';
-L.Icon.Default.mergeOptions({ iconUrl, iconRetinaUrl: icon2xUrl, shadowUrl });
+// ponytail: keep one default-icon reset, scoped to module load. If the asset
+// imports ever fail (e.g. on a future Vite upgrade) we'd see a missing-marker
+// visual, not a blank page, so this is the safe rung.
+try {
+  // @ts-ignore - Vite resolves these as URL strings.
+  const iconUrl = new URL('leaflet/dist/images/marker-icon.png', import.meta.url).href;
+  const icon2xUrl = new URL('leaflet/dist/images/marker-icon-2x.png', import.meta.url).href;
+  const shadowUrl = new URL('leaflet/dist/images/marker-shadow.png', import.meta.url).href;
+  delete L.Icon.Default.prototype._getIconUrl;
+  L.Icon.Default.mergeOptions({ iconUrl, iconRetinaUrl: icon2xUrl, shadowUrl });
+} catch (e) {
+  // Surface but don't crash; tiles still render even if default markers 404.
+  console.warn('[campus] leaflet default-icon assets failed:', e?.message);
+}
 
 const KIND_COLOR = {
   hazard: '#dc2626',
@@ -59,17 +68,32 @@ export default function Campus() {
   useEffect(() => {
     if (!campus || !mapElRef.current || mapRef.current) return;
     const center = computeCentroid(campus.bins || []);
-    const map = L.map(mapElRef.current, { zoomControl: true }).setView(center || [12.9716, 77.5946], 17);
+    const map = L.map(mapElRef.current, {
+      zoomControl: true,
+      // Inline CSS dimensions + later invalidateSize() defeat the "map mounts
+      // into a 0px container and tiles never load" race condition.
+    }).setView(center || [12.9716, 77.5946], 17);
     L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19,
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
     }).addTo(map);
     mapRef.current = map;
 
-    map.on('click', (e) => handleMapClick(e.latlng));
-    if (center) map.fitBounds(L.latLngBounds(center.map(c => L.latLng(...c))).pad(0.5));
+    // Defer one frame so the container has its CSS height, then call
+    // invalidateSize; otherwise the map thinks the container is 0x0.
+    const raf = requestAnimationFrame(() => {
+      try { map.invalidateSize(); } catch {}
+      if (center) map.fitBounds(L.latLngBounds(center.map(c => L.latLng(...c))).pad(0.5));
+    });
 
-    return () => { map.remove(); mapRef.current = null; };
+    map.on('click', (e) => handleMapClick(e.latlng));
+    map.on('error', (e) => console.error('[leaflet]', e));
+
+    return () => {
+      cancelAnimationFrame(raf);
+      map.remove();
+      mapRef.current = null;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [campus]);
 
@@ -202,7 +226,8 @@ export default function Campus() {
           : 'we find the nearest bin to that point.'}
       </p>
 
-      <div ref={mapElRef} className="w-full h-[480px] rounded-md border border-gray-300 overflow-hidden" />
+      {/* Hardcoded 480px height so Tailwind purge / JIT misses can't kill the map. */}
+      <div ref={mapElRef} style={{ height: '480px', width: '100%' }} className="rounded-md border border-gray-300 overflow-hidden bg-gray-50" />
 
       {/* Pending pin form (staff/admin) */}
       {canDropPin && pendingPin && (
