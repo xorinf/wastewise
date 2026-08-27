@@ -6,6 +6,7 @@ import Identify from './pages/Identify';
 import History from './pages/History';
 import Pickup from './pages/Pickup';
 import StaffDashboard from './pages/StaffDashboard';
+import CampusPage from './pages/Campus';
 import Admin from './pages/Admin';
 import { useAuthStore } from './store/authStore';
 
@@ -26,6 +27,7 @@ export default function App() {
           <Route path="/history" element={<RequireAuth><History /></RequireAuth>} />
           <Route path="/pickup" element={<RequireAuth><Pickup /></RequireAuth>} />
           <Route path="/staff" element={<RequireAuth><StaffDashboard /></RequireAuth>} />
+          <Route path="/campus" element={<RequireAuth><CampusPage /></RequireAuth>} />
           <Route path="/admin" element={<RequireAuth><Admin /></RequireAuth>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

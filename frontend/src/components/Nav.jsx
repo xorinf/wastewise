@@ -13,6 +13,7 @@ export default function Nav() {
     { to: '/identify', label: 'Identify Item' },
     { to: '/pickup', label: 'Report Pickup' },
     { to: '/history', label: 'My Impact' },
+    { to: '/campus', label: 'Campus Map' },
   ];
   if (user.role === 'staff' || user.role === 'admin') {
     links.push({ to: '/staff', label: 'Staff Dashboard' });
