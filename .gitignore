@@ -1,0 +1,14 @@
+# root
+.DS_Store
+*.log
+.mongo-data/
+
+# node + build artefacts
+**/node_modules/
+**/dist/
+**/.vite/
+
+# env files — never commit .env with secrets
+backend/.env
+frontend/.env
+frontend/.env.local
