@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { campuses as campusApi, pins as pinsApi } from '../api/client';
 import { useAuthStore } from '../store/authStore';
+import { MapPinIcon, ShieldIcon, BuildingIcon, AlertTriangleIcon, CheckCircleIcon } from '../components/Icons';
+import { EmptyState } from '../components/UI';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 
-// Fix default Leaflet marker icons on Vite (assets paths break by default).
 import iconUrl from 'leaflet/dist/images/marker-icon.png';
 import icon2xUrl from 'leaflet/dist/images/marker-icon-2x.png';
 import shadowUrl from 'leaflet/dist/images/marker-shadow.png';
@@ -18,11 +19,11 @@ const KIND_COLOR = {
   other: '#6b7280',
 };
 const KIND_LABEL = {
-  hazard: 'Hazard',
-  broken_bin: 'Broken bin',
-  no_signage: 'No signage',
-  request_supplies: 'Need supplies',
-  other: 'Other',
+  hazard: 'Hazard Flag',
+  broken_bin: 'Broken Bin',
+  no_signage: 'No Signage',
+  request_supplies: 'Need Supplies',
+  other: 'Other Issue',
 };
 const KIND_VALUES = Object.keys(KIND_COLOR);
 
@@ -30,8 +31,8 @@ export default function Campus() {
   const { selectedCampusId, user } = useAuthStore();
   const [campus, setCampus] = useState(null);
   const [pins, setPins] = useState([]);
-  const [nearest, setNearest] = useState(null); // { bin, distanceMeters }
-  const [pendingPin, setPendingPin] = useState(null); // { lat, lng }
+  const [nearest, setNearest] = useState(null);
+  const [pendingPin, setPendingPin] = useState(null);
   const [pinForm, setPinForm] = useState({ kind: 'hazard', note: '' });
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
@@ -43,34 +44,41 @@ export default function Campus() {
 
   const canDropPin = user?.role === 'staff' || user?.role === 'admin';
 
-  // Load campus + open pins.
   useEffect(() => {
     if (!selectedCampusId) return;
-    setCampus(null); setPins([]); setNearest(null);
+    setCampus(null);
+    setPins([]);
+    setNearest(null);
     Promise.all([
       campusApi.get(selectedCampusId),
       pinsApi.listByCampus(selectedCampusId, 'open'),
     ])
-      .then(([c, p]) => { setCampus(c.campus); setPins(p.pins || []); })
+      .then(([c, p]) => {
+        setCampus(c.campus);
+        setPins(p.pins || []);
+      })
       .catch(e => setErr(e.message));
   }, [selectedCampusId]);
 
-  // Init Leaflet once we have a campus.
   useEffect(() => {
     if (!campus || !mapElRef.current || mapRef.current) return;
     const center = computeCentroid(campus.bins || []);
     const map = L.map(mapElRef.current, { zoomControl: true }).setView(center || [12.9716, 77.5946], 17);
+    
     L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19,
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+      attribution: '&copy; OpenStreetMap contributors',
     }).addTo(map);
+    
     mapRef.current = map;
 
     map.on('click', (e) => handleMapClick(e.latlng));
     if (center) map.fitBounds(L.latLngBounds(center.map(c => L.latLng(...c))).pad(0.5));
 
-    return () => { map.remove(); mapRef.current = null; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => {
+      map.remove();
+      mapRef.current = null;
+    };
   }, [campus]);
 
   function handleMapClick(latlng) {
@@ -78,7 +86,6 @@ export default function Campus() {
       setPendingPin({ lat: latlng.lat, lng: latlng.lng });
       setPinForm({ kind: 'hazard', note: '' });
     } else {
-      // Student: clicking the map means "find nearest bin to this point".
       findNearest(latlng.lat, latlng.lng);
     }
   }
@@ -86,20 +93,30 @@ export default function Campus() {
   async function findNearest(lat, lng) {
     try {
       const r = await campusApi.nearestBin(selectedCampusId, lat, lng);
-      if (!r.bin) { setErr('No located bins on this campus yet.'); return; }
+      if (!r.bin) {
+        setErr('No located bins on this campus yet.');
+        return;
+      }
       setNearest({ bin: r.bin, distanceMeters: r.distanceMeters, origin: { lat, lng } });
       setErr('');
       if (studentMarkerRef.current) mapRef.current.removeLayer(studentMarkerRef.current);
       studentMarkerRef.current = L.circleMarker([lat, lng], {
-        radius: 7, color: '#111827', weight: 2, fillOpacity: 0.9,
-      }).addTo(mapRef.current).bindTooltip('You were here');
-    } catch (e) { setErr(e.response?.data?.error || 'Failed'); }
+        radius: 8,
+        color: '#14532D',
+        weight: 3,
+        fillColor: '#A3E635',
+        fillOpacity: 0.9,
+      }).addTo(mapRef.current).bindTooltip('Your Clicked Position', { permanent: true });
+    } catch (e) {
+      setErr(e.response?.data?.error || 'Failed to locate nearest bin');
+    }
   }
 
   async function submitPin(e) {
     e.preventDefault();
     if (!pendingPin) return;
-    setBusy(true); setErr('');
+    setBusy(true);
+    setErr('');
     try {
       const r = await pinsApi.create({
         campusId: selectedCampusId,
@@ -110,11 +127,13 @@ export default function Campus() {
       });
       setPins(p => [r.pin, ...p]);
       setPendingPin(null);
-    } catch (e2) { setErr(e2.response?.data?.error || 'Failed to drop pin'); }
-    finally { setBusy(false); }
+    } catch (e2) {
+      setErr(e2.response?.data?.error || 'Failed to drop pin');
+    } finally {
+      setBusy(false);
+    }
   }
 
-  // Render bin markers whenever the campus changes.
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !campus) return;
@@ -123,10 +142,17 @@ export default function Campus() {
     const located = (campus.bins || []).filter(b => b.lat != null && b.lng != null);
     for (const b of located) {
       const m = L.circleMarker([b.lat, b.lng], {
-        radius: 9, color: '#111827', weight: 2,
-        fillColor: '#4b5563', fillOpacity: 0.9,
+        radius: 9,
+        color: '#10251B',
+        weight: 2,
+        fillColor: '#16A34A',
+        fillOpacity: 0.95,
       }).addTo(map).bindPopup(
-        `<div class="text-sm"><strong>${escapeHtml(b.binId)}</strong><br>${escapeHtml(b.building)} · floor ${escapeHtml(b.floor)}<br><button data-binid="${escapeHtml(b.binId)}" class="text-xs underline mt-1">Find nearest to here</button></div>`
+        `<div class="p-1 text-xs space-y-1">
+          <strong class="text-sm font-bold block text-emerald-900">Bin #${escapeHtml(b.binId)}</strong>
+          <span>${escapeHtml(b.building)} · Floor ${escapeHtml(b.floor)}</span><br>
+          <button data-binid="${escapeHtml(b.binId)}" class="text-xs font-bold text-emerald-700 underline mt-1 block">Find distance from here</button>
+        </div>`
       );
       markersRef.current.bins.push(m);
     }
@@ -143,7 +169,6 @@ export default function Campus() {
     });
   }, [campus]);
 
-  // Render pin markers whenever pins change.
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -152,13 +177,17 @@ export default function Campus() {
     for (const p of pins) {
       const color = KIND_COLOR[p.kind] || '#6b7280';
       const m = L.circleMarker([p.lat, p.lng], {
-        radius: 7, color, weight: 2,
-        fillColor: color, fillOpacity: 0.85,
+        radius: 8,
+        color,
+        weight: 2,
+        fillColor: color,
+        fillOpacity: 0.9,
       }).addTo(map).bindPopup(
-        `<div class="text-sm"><strong>${escapeHtml(KIND_LABEL[p.kind] || p.kind)}</strong>`
-        + (p.note ? `<br><span>${escapeHtml(p.note)}</span>` : '')
-        + (canDropPin ? `<br><button data-pinresolve="${p._id}" class="text-xs underline mt-1">Mark resolved</button>` : '')
-        + '</div>'
+        `<div class="p-1 text-xs space-y-1">
+          <strong class="font-bold text-sm block" style="color:${color}">${escapeHtml(KIND_LABEL[p.kind] || p.kind)}</strong>
+          ${p.note ? `<span>${escapeHtml(p.note)}</span><br>` : ''}
+          ${canDropPin ? `<button data-pinresolve="${p._id}" class="text-xs font-bold underline text-emerald-700 mt-1 block">Mark Resolved ✓</button>` : ''}
+        </div>`
       );
       markersRef.current.pins.push(m);
     }
@@ -177,86 +206,151 @@ export default function Campus() {
   }, [pins, canDropPin]);
 
   if (!selectedCampusId) {
-    return <main className="max-w-2xl mx-auto p-8"><p className="text-gray-700">Pick a campus first (top right).</p></main>;
+    return (
+      <main className="max-w-2xl mx-auto p-8 text-center space-y-4">
+        <EmptyState
+          icon={BuildingIcon}
+          title="Select a Campus First"
+          description="Please select your campus from the top navigation bar to access the interactive bin map."
+        />
+      </main>
+    );
   }
+
   if (!campus) {
-    return <main className="max-w-4xl mx-auto p-8"><p className="text-gray-600">Loading…</p></main>;
+    return (
+      <main className="max-w-6xl mx-auto p-8 text-center space-y-3">
+        <div className="w-10 h-10 border-4 border-eco-mint border-t-eco-emerald rounded-full animate-spin mx-auto" />
+        <p className="text-sm font-semibold text-eco-secondary">Loading campus interactive map...</p>
+      </main>
+    );
   }
 
   const located = (campus.bins || []).filter(b => b.lat != null && b.lng != null);
   const binsNoCoords = (campus.bins || []).filter(b => b.lat == null || b.lng == null);
 
   return (
-    <main className="max-w-6xl mx-auto px-4 py-6 space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">{campus.name}</h1>
-        <div className="flex gap-2 text-xs">
-          <span className="chip">{located.length} of {(campus.bins||[]).length} bins located</span>
-          <span className="chip">{pins.length} open pins</span>
+    <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
+      
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-eco-mint border border-eco-emerald/30 text-xs font-bold text-eco-forest">
+            <MapPinIcon className="w-4 h-4 text-eco-emerald" />
+            Interactive Campus Utility Map
+          </div>
+          <h1 className="text-3xl font-extrabold text-eco-text tracking-tight mt-1">
+            {campus.name}
+          </h1>
+          <p className="text-xs sm:text-sm text-eco-secondary">
+            {canDropPin
+              ? 'Staff & Admin mode: Click anywhere on the map to drop a hazard pin or resolve open flags.'
+              : 'Click anywhere on the map to instantly calculate distance to the nearest recycling bin.'}
+          </p>
+        </div>
+
+        <div className="flex items-center gap-2 text-xs">
+          <span className="chip font-bold">📍 {located.length} / {(campus.bins||[]).length} Bins Plotted</span>
+          <span className="chip bg-amber-50 text-amber-800 border-amber-200 font-bold">⚠️ {pins.length} Open Staff Pins</span>
         </div>
       </div>
 
-      <p className="text-xs text-gray-600">
-        Click the map: {canDropPin
-          ? 'staff/admin can drop a pin, or click an existing bin to focus it.'
-          : 'we find the nearest bin to that point.'}
-      </p>
+      {/* Leaflet Map Container */}
+      <div className="card p-2 border-2 border-eco-border shadow-eco-lg rounded-3xl relative overflow-hidden">
+        <div ref={mapElRef} className="w-full h-[520px] rounded-2xl overflow-hidden z-10" />
+      </div>
 
-      <div ref={mapElRef} className="w-full h-[480px] rounded-md border border-gray-300 overflow-hidden" />
-
-      {/* Pending pin form (staff/admin) */}
+      {/* Pending Pin Form (Staff/Admin) */}
       {canDropPin && pendingPin && (
-        <form onSubmit={submitPin} className="card space-y-3 border-gray-900 border-2">
-          <h2 className="font-semibold">Drop pin</h2>
-          <p className="text-xs text-gray-500">lat {pendingPin.lat.toFixed(5)}, lng {pendingPin.lng.toFixed(5)}</p>
-          <div className="grid grid-cols-2 gap-3">
+        <form onSubmit={submitPin} className="card border-2 border-eco-forest bg-gradient-to-br from-white to-eco-mint/40 space-y-4 shadow-eco-md animate-in fade-in">
+          <div className="flex items-center justify-between border-b border-eco-border pb-2">
+            <h2 className="font-extrabold text-base text-eco-forest flex items-center gap-2">
+              <ShieldIcon className="w-5 h-5 text-eco-emerald" />
+              Drop Hazard Flag Pin
+            </h2>
+            <span className="text-xs font-mono font-bold text-eco-secondary">
+              Lat: {pendingPin.lat.toFixed(5)}, Lng: {pendingPin.lng.toFixed(5)}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <label className="label">Kind</label>
+              <label className="label">Flag Kind</label>
               <select className="field" value={pinForm.kind} onChange={e => setPinForm({ ...pinForm, kind: e.target.value })}>
                 {KIND_VALUES.map(k => <option key={k} value={k}>{KIND_LABEL[k]}</option>)}
               </select>
             </div>
             <div>
-              <label className="label">Note (optional)</label>
-              <input className="field" value={pinForm.note} onChange={e => setPinForm({ ...pinForm, note: e.target.value })} maxLength={280} />
+              <label className="label">Note (Optional)</label>
+              <input
+                className="field"
+                placeholder="e.g. Overflowing wet waste, broken lid"
+                value={pinForm.note}
+                onChange={e => setPinForm({ ...pinForm, note: e.target.value })}
+                maxLength={280}
+              />
             </div>
           </div>
-          <div className="flex gap-2">
-            <button className="btn btn-primary" disabled={busy}>{busy ? '...' : 'Save pin'}</button>
-            <button type="button" className="btn" onClick={() => setPendingPin(null)}>Cancel</button>
+
+          <div className="flex gap-3 pt-1">
+            <button className="btn btn-primary px-6" disabled={busy}>
+              {busy ? 'Saving Pin...' : 'Drop Pin on Map'}
+            </button>
+            <button type="button" className="btn" onClick={() => setPendingPin(null)}>
+              Cancel
+            </button>
           </div>
         </form>
       )}
 
-      {/* Nearest-result card (students) */}
+      {/* Nearest Result Card (Students) */}
       {nearest && nearest.bin && (
-        <div className="card border-gray-900 border-2">
-          <p className="text-xs uppercase tracking-wide text-gray-500">Nearest bin</p>
-          <p className="font-medium">
-            {nearest.bin.binId} · {nearest.bin.building} · floor {nearest.bin.floor}
-          </p>
-          <p className="text-sm text-gray-600">≈ {nearest.distanceMeters} m from where you clicked</p>
+        <div className="card border-2 border-eco-emerald bg-eco-mint/30 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-eco-md animate-in fade-in">
+          <div className="space-y-1">
+            <span className="text-xs font-extrabold uppercase tracking-wider text-eco-forest flex items-center gap-1">
+              <CheckCircleIcon className="w-4 h-4 text-eco-emerald" />
+              Nearest Recycling Bin Found
+            </span>
+            <p className="text-lg font-extrabold text-eco-text">
+              Bin #{nearest.bin.binId} · {nearest.bin.building} · Floor {nearest.bin.floor}
+            </p>
+          </div>
+          <div className="px-4 py-2 rounded-2xl bg-eco-forest text-white text-center shrink-0">
+            <p className="text-xs font-bold text-eco-lime">Distance</p>
+            <p className="text-xl font-extrabold">≈ {nearest.distanceMeters} m</p>
+          </div>
         </div>
       )}
 
-      <div className="flex flex-wrap gap-2 text-xs">
-        {Object.entries(KIND_LABEL).map(([k, label]) => (
-          <span key={k} className="inline-flex items-center gap-1.5 px-2 py-1 border border-gray-200 rounded">
-            <span className="inline-block w-3 h-3 rounded-full" style={{ background: KIND_COLOR[k] }} />
-            <span className="text-gray-700">{label}</span>
+      {/* Map Legend */}
+      <div className="card space-y-3">
+        <h3 className="text-xs font-extrabold uppercase tracking-wider text-eco-secondary">Map Key & Legend</h3>
+        <div className="flex flex-wrap gap-3 text-xs">
+          <span className="inline-flex items-center gap-2 px-3 py-1.5 border border-eco-border rounded-xl bg-white">
+            <span className="w-3.5 h-3.5 rounded-full bg-emerald-600 shadow-xs" />
+            <strong className="text-eco-text">Recycling Bin Marker</strong>
           </span>
-        ))}
-        <span className="inline-flex items-center gap-1.5 px-2 py-1 border border-gray-200 rounded">
-          <span className="inline-block w-3 h-3 rounded-full" style={{ background: '#4b5563' }} />
-          <span className="text-gray-700">Bin</span>
-        </span>
+          {Object.entries(KIND_LABEL).map(([k, label]) => (
+            <span key={k} className="inline-flex items-center gap-2 px-3 py-1.5 border border-eco-border rounded-xl bg-white">
+              <span className="w-3.5 h-3.5 rounded-full shadow-xs" style={{ background: KIND_COLOR[k] }} />
+              <span className="text-eco-text font-semibold">{label}</span>
+            </span>
+          ))}
+        </div>
       </div>
 
-      {err && <p className="text-sm text-red-700">{err}</p>}
+      {err && (
+        <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-xs font-bold text-red-700">
+          ⚠️ {err}
+        </div>
+      )}
 
       {binsNoCoords.length > 0 && (
-        <p className="text-xs text-gray-500">{binsNoCoords.length} bins without coordinates — admin can add them under Admin &gt; Bin coordinates.</p>
+        <p className="text-xs text-eco-secondary text-center">
+          ℹ️ {binsNoCoords.length} bins do not have lat/lng coordinates set yet. Administrators can add coordinates under Admin &gt; Edit Bins.
+        </p>
       )}
+
     </main>
   );
 }
@@ -271,4 +365,3 @@ function computeCentroid(bins) {
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
 }
-

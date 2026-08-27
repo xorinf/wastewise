@@ -18,19 +18,21 @@ function RequireAuth({ children }) {
 export default function App() {
   return (
     <BrowserRouter>
-      <div className="min-h-screen flex flex-col">
+      <div className="min-h-screen flex flex-col bg-eco-bg text-eco-text pb-20 md:pb-8">
         <Nav />
-        <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route path="/" element={<RequireAuth><Home /></RequireAuth>} />
-          <Route path="/identify" element={<RequireAuth><Identify /></RequireAuth>} />
-          <Route path="/history" element={<RequireAuth><History /></RequireAuth>} />
-          <Route path="/pickup" element={<RequireAuth><Pickup /></RequireAuth>} />
-          <Route path="/staff" element={<RequireAuth><StaffDashboard /></RequireAuth>} />
-          <Route path="/campus" element={<RequireAuth><CampusPage /></RequireAuth>} />
-          <Route path="/admin" element={<RequireAuth><Admin /></RequireAuth>} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
+        <main className="flex-1">
+          <Routes>
+            <Route path="/login" element={<Login />} />
+            <Route path="/" element={<RequireAuth><Home /></RequireAuth>} />
+            <Route path="/identify" element={<RequireAuth><Identify /></RequireAuth>} />
+            <Route path="/history" element={<RequireAuth><History /></RequireAuth>} />
+            <Route path="/pickup" element={<RequireAuth><Pickup /></RequireAuth>} />
+            <Route path="/staff" element={<RequireAuth><StaffDashboard /></RequireAuth>} />
+            <Route path="/campus" element={<RequireAuth><CampusPage /></RequireAuth>} />
+            <Route path="/admin" element={<RequireAuth><Admin /></RequireAuth>} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </main>
       </div>
     </BrowserRouter>
   );

@@ -1,13 +1,15 @@
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { items } from '../api/client';
 import { useAuthStore } from '../store/authStore';
 import { BIN, BIN_KEY } from '../utils/lookups';
+import { BinBadge, ConfidenceBar } from '../components/UI';
+import { CameraIcon, UploadIcon, SparklesIcon, CheckCircleIcon, RefreshIcon, LeafIcon, AlertTriangleIcon, RecycleIcon, StarIcon } from '../components/Icons';
 
 const STATUS_TEXT = {
-  uploading: 'Uploading to image storage…',
-  classifying: 'Asking Gemini to classify…',
-  logging: 'Logging your item…',
+  uploading: 'Uploading photo to secure image storage…',
+  classifying: 'Analyzing object with Gemini 1.5 Flash Vision AI…',
+  logging: 'Logging item to campus environmental ledger…',
 };
 
 export default function Identify() {
@@ -17,18 +19,27 @@ export default function Identify() {
   const [previewUrl, setPreviewUrl] = useState(null);
   const [result, setResult] = useState(null);
   const [err, setErr] = useState('');
+  const [pointsToast, setPointsToast] = useState(false);
 
-  useEffect(() => { items.quickSelect().then(d => setGrid(d.items)).catch(() => {}); }, []);
+  useEffect(() => {
+    items.quickSelect().then(d => setGrid(d.items || [])).catch(() => {});
+  }, []);
 
   const reset = () => {
-    setErr(''); setResult(null); setStatus(null);
-    if (previewUrl) { URL.revokeObjectURL(previewUrl); setPreviewUrl(null); }
+    setErr('');
+    setResult(null);
+    setStatus(null);
+    setPointsToast(false);
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+      setPreviewUrl(null);
+    }
   };
 
   const upload = async (file) => {
     if (!file) return;
     if (!selectedCampusId) {
-      setErr('Please select a campus first (top right).');
+      setErr('Please select a campus first from the top header.');
       return;
     }
     reset();
@@ -36,9 +47,6 @@ export default function Identify() {
     setPreviewUrl(URL.createObjectURL(file));
 
     try {
-      // Single request: backend does upload + classify + log in one round-trip.
-      // Image data travels to the backend; it stores it on Cloudinary, calls Gemini,
-      // and (on high confidence) writes the DisposalLog row.
       setStatus('classifying');
       const fd = new FormData();
       fd.append('image', file);
@@ -46,7 +54,6 @@ export default function Identify() {
       const r = await items.identify(fd);
 
       if (r.lowConfidence) {
-        // Keep preview + show the suggestions inline so the user picks immediately.
         setResult({ ...r, mode: 'pickFromPhoto', previewUrl: URL.createObjectURL(file), pendingFile: file });
         setStatus(null);
         return;
@@ -54,35 +61,44 @@ export default function Identify() {
 
       setStatus('logging');
       const log = await items.log({
-        itemName: r.itemName, category: r.category, campusId: selectedCampusId,
-        source: 'upload', imageUrl: r.imageUrl || '',
+        itemName: r.itemName,
+        category: r.category,
+        campusId: selectedCampusId,
+        source: 'upload',
+        imageUrl: r.imageUrl || '',
       });
       setResult({ ...r, mode: 'photo', logId: log.log?._id, status: log.log?.status, points: 0 });
       setStatus(null);
     } catch (e) {
-      setErr(e.response?.data?.error || e.message || 'Upload failed');
+      setErr(e.response?.data?.error || e.message || 'Upload failed. Please check network.');
       setStatus(null);
     }
   };
 
-  // Used when the user picks from the grid AFTER uploading a photo.
-  // We log with source='upload' (so it counts as image-driven) and attach the
-  // imageUrl from the previous upload response.
   const pickFromGrid = async (item, imageUrl = '') => {
-    if (!selectedCampusId) { setErr('Please select a campus first (top right).'); return; }
+    if (!selectedCampusId) {
+      setErr('Please select a campus first from the top header.');
+      return;
+    }
     setStatus('logging');
     setErr('');
     try {
       const r = await items.log({
-        itemName: item.name, category: item.category, campusId: selectedCampusId,
+        itemName: item.name,
+        category: item.category,
+        campusId: selectedCampusId,
         source: imageUrl ? 'upload' : 'quick_select',
         imageUrl,
       });
       setResult({
-        itemName: item.name, category: item.category,
-        binColor: r.log.binColor, points: r.points,
-        estimatedKg: r.log.estimatedKg, imageUrl: r.log.imageUrl,
-        status: r.log.status, logId: r.log._id,
+        itemName: item.name,
+        category: item.category,
+        binColor: r.log.binColor,
+        points: r.points,
+        estimatedKg: r.log.estimatedKg,
+        imageUrl: r.log.imageUrl,
+        status: r.log.status,
+        logId: r.log._id,
         mode: 'photo',
       });
     } catch (e) {
@@ -92,198 +108,344 @@ export default function Identify() {
     }
   };
 
-  // After verification, the "Mark disposed" button hits /verify/:id.
-  // The points + kg bar moves on My Impact once this returns.
   const verify = async () => {
     if (!result?.logId) return;
     try {
       const r = await items.verify(result.logId);
       setResult(prev => ({ ...prev, status: 'verified', points: (prev.points || 0) + (r.points || 0) }));
+      setPointsToast(true);
+      setTimeout(() => setPointsToast(false), 4000);
     } catch (e) {
-      setErr(e.response?.data?.error || 'Could not verify');
+      setErr(e.response?.data?.error || 'Could not verify disposal');
     }
   };
 
-  // Quick-select is highlighted when the user is in the "pickFromPhoto" state,
-  // so they can pick without losing context.
   const inPhotoPickMode = result?.mode === 'pickFromPhoto';
   const pendingImageUrl = result?.imageUrl;
 
   return (
-    <main className="max-w-4xl mx-auto px-4 py-8 space-y-6">
-      <h1 className="text-2xl font-bold">Identify an item</h1>
-
-      {/* Upload card */}
-      <div className="card space-y-3">
-        <h2 className="font-semibold">Upload a photo</h2>
-        <input
-          type="file" accept="image/*" disabled={!!status}
-          onChange={e => upload(e.target.files[0])}
-          className="block w-full text-sm text-gray-700 file:mr-3 file:py-2 file:px-4 file:rounded-md file:border file:border-gray-900 file:bg-white file:text-gray-900 hover:file:bg-gray-900 hover:file:text-white"
-        />
-
-        {status && (
-          <div className="flex items-center gap-3 p-3 border border-gray-300 rounded-md bg-gray-50" aria-live="polite">
-            <Spinner />
-            <span className="text-sm text-gray-700">{STATUS_TEXT[status]}</span>
+    <main className="max-w-5xl mx-auto px-4 sm:px-6 py-8 space-y-8">
+      
+      {/* Header Banner */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-eco-mint border border-eco-emerald/30 text-xs font-bold text-eco-forest">
+            <SparklesIcon className="w-4 h-4 text-eco-emerald" />
+            AI Waste Recognition Engine
           </div>
-        )}
+          <h1 className="text-3xl font-extrabold text-eco-text tracking-tight mt-1">
+            Identify Waste & Find Your Bin 📷
+          </h1>
+          <p className="text-xs sm:text-sm text-eco-secondary">
+            Snap a picture or choose from common campus items to get instant sorting guidance.
+          </p>
+        </div>
 
-        {previewUrl && !status && !result && (
-          <div className="space-y-2">
-            <p className="text-xs text-gray-500">Preview</p>
-            <img src={previewUrl} alt="Uploaded item preview" className="max-h-48 rounded-md border border-gray-200" />
-          </div>
+        {result && (
+          <button
+            onClick={reset}
+            className="btn btn-eco-secondary self-start flex items-center gap-2"
+          >
+            <RefreshIcon className="w-4 h-4" />
+            Scan New Item
+          </button>
         )}
-
-        <p className="text-xs text-gray-500">
-          Image goes to Cloudinary, then Gemini classifies it. Low-confidence results fall back to the grid below — you can still pick an item and the photo stays attached.
-        </p>
       </div>
 
-      {/* Result card — shown when we know what was classified */}
-      {result && !status && (
-        <div className="card space-y-3 border-2 border-gray-900">
-          <div className="flex items-start justify-between gap-4">
+      {/* Floating Points Toast Animation */}
+      {pointsToast && (
+        <div className="fixed top-20 right-6 z-50 animate-bounce-soft">
+          <div className="px-5 py-3 rounded-2xl bg-eco-forest text-white shadow-eco-lg border-2 border-eco-lime flex items-center gap-3">
+            <span className="text-xl">⭐</span>
             <div>
-              <p className="text-xs text-gray-500 uppercase tracking-wide">
-                {result.mode === 'pickFromPhoto' ? 'Pick an item' : 'Classified'}
-              </p>
-              <p className="text-lg mt-1">
-                <strong>{result.itemName || result.message}</strong>
-                {result.binColor && <> · put it in the <strong>{result.binColor}</strong> bin</>}
-              </p>
-              {result.estimatedKg != null && (
-                <p className="text-sm text-gray-600">≈ {result.estimatedKg.toFixed(2)} kg diverted</p>
-              )}
+              <p className="font-extrabold text-sm text-eco-lime">+10 Eco XP Earned!</p>
+              <p className="text-[11px] text-emerald-100">Disposal verified at bin</p>
             </div>
-            {result.imageUrl && (
-              <img src={result.imageUrl} alt="Uploaded item" className="w-20 h-20 rounded-md border border-gray-200 object-cover" />
-            )}
+          </div>
+        </div>
+      )}
+
+      {/* Primary Scanner Drop Zone Card */}
+      {!result && (
+        <div className="eco-card-gradient relative overflow-hidden border-2 border-dashed border-eco-emerald/30 hover:border-eco-emerald transition-all duration-300 p-8 sm:p-12 text-center space-y-6">
+          
+          <div className="max-w-md mx-auto space-y-4">
+            {/* Animated Scanner Graphic */}
+            <div className="relative w-20 h-20 mx-auto rounded-3xl bg-gradient-to-tr from-eco-forest to-eco-teal text-white flex items-center justify-center shadow-eco-glow">
+              <CameraIcon className="w-10 h-10 text-eco-lime animate-pulse" />
+              <div className="absolute -top-1 -right-1 w-6 h-6 rounded-full bg-eco-lime text-eco-forest font-extrabold text-[10px] flex items-center justify-center shadow-sm">
+                AI
+              </div>
+            </div>
+
+            <div>
+              <h2 className="text-xl font-extrabold text-eco-text">Snap or Upload Your Waste Photo</h2>
+              <p className="text-xs text-eco-secondary mt-1">
+                Gemini AI detects materials (plastic, glass, organic, e-waste) and guides you to the correct bin.
+              </p>
+            </div>
+
+            {/* Upload Buttons */}
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
+              <label className="btn btn-primary cursor-pointer w-full sm:w-auto px-6 py-3 flex items-center justify-center gap-2">
+                <CameraIcon className="w-5 h-5 text-eco-lime" />
+                <span>Take Photo / Choose File</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  disabled={!!status}
+                  onChange={e => upload(e.target.files[0])}
+                  className="hidden"
+                />
+              </label>
+            </div>
           </div>
 
-          {result.mode === 'pickFromPhoto' && (
-            <div>
-              <p className="text-sm text-gray-700">{result.message || 'Vision model unsure — pick the closest match below.'}</p>
-              {pendingImageUrl && (
-                <p className="text-xs text-gray-500 mt-1">Your uploaded image will be attached to whichever item you pick.</p>
-              )}
+          {/* Scanning Progress Overlay */}
+          {status && (
+            <div className="absolute inset-0 bg-white/95 backdrop-blur-md z-20 flex flex-col items-center justify-center p-6 space-y-4 animate-in fade-in">
+              <div className="relative w-16 h-16">
+                <div className="w-16 h-16 rounded-full border-4 border-eco-mint border-t-eco-emerald animate-spin" />
+                <RecycleIcon className="w-8 h-8 text-eco-forest absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2" />
+              </div>
+              <div className="text-center space-y-1">
+                <p className="font-extrabold text-base text-eco-forest">{STATUS_TEXT[status]}</p>
+                <p className="text-xs text-eco-secondary">Hold tight while WasteWise AI processes your image...</p>
+              </div>
             </div>
           )}
 
-          {/* Pending -> ask the user to confirm they actually disposed of it.
-             Verified -> show confirmation. The flow: identify -> walk to bin ->
-             tap "In the bin!" -> stats move. */}
-          {result.logId && result.status === 'pending' && (
-            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-200 pt-3">
-              <p className="text-sm text-gray-700">
-                Walk to the <strong>{result.binColor}</strong> bin and tap <strong>In the bin</strong> to credit +10 pts.
+          {/* Preview image if loaded */}
+          {previewUrl && !status && !result && (
+            <div className="max-w-xs mx-auto pt-2 space-y-2">
+              <p className="text-xs font-bold text-eco-secondary uppercase">Previewing Image</p>
+              <img src={previewUrl} alt="Uploaded waste item" className="w-full h-48 rounded-2xl object-cover border border-eco-border shadow-eco-sm mx-auto" />
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Result Card / Wow Moment */}
+      {result && !status && (
+        <div className="card border-2 border-eco-emerald shadow-eco-lg p-6 sm:p-8 space-y-6 bg-gradient-to-br from-white via-white to-eco-mint/30">
+          
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 pb-6 border-b border-eco-border">
+            <div className="space-y-3 flex-1">
+              <div className="flex items-center gap-2">
+                <span className="px-3 py-1 rounded-full bg-eco-forest text-eco-lime text-xs font-extrabold uppercase tracking-wider flex items-center gap-1.5">
+                  <SparklesIcon className="w-3.5 h-3.5" />
+                  {result.mode === 'pickFromPhoto' ? 'Manual Verification Required' : 'AI Classification Complete'}
+                </span>
+                {result.confidence != null && (
+                  <span className="text-xs font-bold text-eco-secondary">
+                    {Math.round(result.confidence * 100)}% Match
+                  </span>
+                )}
+              </div>
+
+              <div>
+                <h2 className="text-2xl sm:text-3xl font-extrabold text-eco-text tracking-tight">
+                  {result.itemName || result.message}
+                </h2>
+                {result.estimatedKg != null && (
+                  <p className="text-xs font-semibold text-eco-emerald mt-1 flex items-center gap-1">
+                    <LeafIcon className="w-4 h-4" />
+                    Estimated Landfill Diversion: ≈ {result.estimatedKg.toFixed(2)} kg
+                  </p>
+                )}
+              </div>
+
+              {/* Confidence Bar */}
+              {result.confidence != null && (
+                <div className="max-w-sm">
+                  <ConfidenceBar confidence={result.confidence} />
+                </div>
+              )}
+            </div>
+
+            {/* Uploaded Image Thumbnail */}
+            {result.imageUrl && (
+              <div className="relative w-28 h-28 shrink-0 rounded-2xl overflow-hidden border-2 border-eco-emerald shadow-eco-md">
+                <img src={result.imageUrl} alt="Identified waste item" className="w-full h-full object-cover" />
+              </div>
+            )}
+          </div>
+
+          {/* Recommended Bin Highlight */}
+          {result.category && (
+            <div className="space-y-2">
+              <p className="text-xs font-extrabold uppercase tracking-wider text-eco-secondary">Target Disposal Bin</p>
+              <BinBadge category={result.category} binColor={result.binColor} size="lg" />
+            </div>
+          )}
+
+          {/* Low confidence suggestion mode */}
+          {result.mode === 'pickFromPhoto' && (
+            <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 space-y-2">
+              <div className="flex items-center gap-2 font-bold text-sm">
+                <AlertTriangleIcon className="w-5 h-5 text-amber-600" />
+                <span>Vision AI Needs Your Confirmation</span>
+              </div>
+              <p className="text-xs text-amber-800 leading-relaxed">
+                {result.message || "We're not 100% sure about this photo. Select the closest item category below to log it."}
               </p>
-              <button className="btn btn-primary" onClick={verify}>In the bin ✓</button>
+            </div>
+          )}
+
+          {/* Verification Actions */}
+          {result.logId && result.status === 'pending' && (
+            <div className="p-5 rounded-2xl bg-eco-forest text-white flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-eco-md">
+              <div className="space-y-1">
+                <p className="font-extrabold text-sm text-eco-lime flex items-center gap-2">
+                  <span>📍</span> Walk to the <u className="uppercase">{result.binColor} Bin</u>
+                </p>
+                <p className="text-xs text-emerald-100/90">
+                  Tap "In the bin ✓" once you dispose of the item to credit +10 points to your account.
+                </p>
+              </div>
+              <button
+                className="px-6 py-3 rounded-xl bg-eco-lime text-eco-forest font-extrabold text-sm hover:bg-lime-300 shadow-eco-glow transition duration-150 shrink-0 flex items-center justify-center gap-2"
+                onClick={verify}
+              >
+                <CheckCircleIcon className="w-5 h-5" />
+                <span>In the Bin ✓ (+10 XP)</span>
+              </button>
             </div>
           )}
 
           {result.logId && result.status === 'verified' && (
-            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-200 pt-3">
-              <p className="text-sm text-gray-700">
-                Verified. <Link to="/history" className="underline">See in My Impact</Link>
-              </p>
-              <span className="chip">+{result.points || 10} pts</span>
+            <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-900 flex items-center justify-between">
+              <div className="flex items-center gap-2 text-sm font-extrabold">
+                <CheckCircleIcon className="w-5 h-5 text-emerald-600" />
+                <span>Disposal Verified! +{result.points || 10} Points Added.</span>
+              </div>
+              <Link to="/history" className="text-xs font-bold underline text-eco-forest">
+                View My Impact →
+              </Link>
             </div>
           )}
 
-          <button className="btn !text-sm" onClick={reset}>Identify another</button>
+          <div className="pt-2 flex justify-end">
+            <button className="btn" onClick={reset}>
+              Identify Another Item
+            </button>
+          </div>
+
         </div>
       )}
 
-      {/* Quick-select grid */}
-      <div className="card space-y-4">
-        <div>
-          <h2 className="font-semibold">
-            {inPhotoPickMode ? 'Pick one — photo will be attached' : 'Or quick-select'}
-          </h2>
-          <p className="text-xs text-gray-500">Each tap logs the item and awards +10 points. The colored dot shows which bin it goes to.</p>
+      {/* Quick Select Category Grid */}
+      <div className="card space-y-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-eco-border pb-4">
+          <div>
+            <h2 className="font-extrabold text-lg text-eco-text flex items-center gap-2">
+              <RecycleIcon className="w-5 h-5 text-eco-emerald" />
+              {inPhotoPickMode ? 'Pick Closest Category (Photo Attached)' : 'Or Select Common Campus Items'}
+            </h2>
+            <p className="text-xs text-eco-secondary">
+              Tap any item below to quickly log your disposal and claim +10 points instantly.
+            </p>
+          </div>
         </div>
 
-        {/* Bin color key — teaches the visual grammar in one glance */}
-        <div className="flex flex-wrap gap-2 text-xs">
+        {/* Bin Color Palette Key */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 text-xs">
           {BIN_KEY.map(k => (
-            <span key={k.category} className="inline-flex items-center gap-1.5 px-2 py-1 border border-gray-200 rounded">
-              <span className="inline-block w-3 h-3 rounded-full" style={{ background: k.color }} />
-              <strong className="text-gray-700">{k.textColor}</strong>
-              <span className="text-gray-500">· {k.label}</span>
-            </span>
+            <div key={k.category} className="p-2.5 rounded-xl border border-eco-border bg-eco-bg flex items-center gap-2.5">
+              <span className="w-3.5 h-3.5 rounded-full shrink-0 shadow-sm" style={{ background: k.color }} />
+              <div>
+                <p className="font-bold text-eco-text text-xs">{k.label}</p>
+                <p className="text-[10px] text-eco-muted truncate">{k.hint}</p>
+              </div>
+            </div>
           ))}
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+        {/* Item Cards Grid */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
           {grid.map((it) => {
-            const bin = BIN[it.category] || {};
             const swatch = BIN_KEY.find(k => k.category === it.category);
             return (
               <button
                 key={it.name}
                 disabled={!!status}
                 onClick={() => pickFromGrid(it, inPhotoPickMode ? pendingImageUrl : '')}
-                className={`group flex flex-col items-start text-left border border-gray-300 rounded-md px-3 py-2 bg-white hover:border-gray-900 disabled:opacity-50 disabled:cursor-not-allowed transition ${inPhotoPickMode ? 'border-2 border-gray-900' : ''}`}
+                className={`group flex flex-col justify-between p-3.5 text-left border rounded-2xl bg-white hover:border-eco-emerald hover:shadow-eco-sm transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed ${
+                  inPhotoPickMode ? 'border-2 border-eco-forest bg-eco-mint/40' : 'border-eco-border'
+                }`}
               >
-                <span className="flex items-center gap-2">
-                  <span className="inline-block w-2.5 h-2.5 rounded-full shrink-0" style={{ background: swatch?.color }} />
-                  <span className="font-medium text-sm text-gray-900">{it.name}</span>
+                <div className="flex items-center gap-2">
+                  <span className="w-3 h-3 rounded-full shrink-0 shadow-xs" style={{ background: swatch?.color || '#16a34a' }} />
+                  <span className="font-extrabold text-sm text-eco-text group-hover:text-eco-forest truncate">{it.name}</span>
+                </div>
+                <span className="text-[11px] font-semibold text-eco-secondary mt-2 flex items-center justify-between">
+                  <span>→ {swatch?.textColor || 'Bin'} bin</span>
+                  <span className="text-eco-emerald group-hover:translate-x-0.5 transition">+10 pts</span>
                 </span>
-                <span className="text-xs text-gray-500 mt-1">→ {bin.color || '—'} bin</span>
               </button>
             );
           })}
         </div>
       </div>
 
-      {/* Custom waste type */}
-      <div className="card space-y-3">
-        <h2 className="font-semibold">Custom waste type</h2>
-        <p className="text-xs text-gray-500">Type any item not in the grid above. Pick the matching category.</p>
+      {/* Custom Waste Type Form */}
+      <div className="card space-y-4">
+        <div>
+          <h2 className="font-extrabold text-base text-eco-text">Log Custom Waste Item</h2>
+          <p className="text-xs text-eco-secondary">
+            Don't see your item in the quick list? Enter any custom name and pick its recycling category.
+          </p>
+        </div>
+
         <CustomForm
           imageUrl={inPhotoPickMode ? pendingImageUrl : ''}
           disabled={!!status}
           busy={status === 'logging'}
           onLogged={(r) => {
             setResult({
-              itemName: r.log.itemName, category: r.log.category,
-              binColor: r.log.binColor, points: 0,
-              estimatedKg: r.log.estimatedKg, imageUrl: r.log.imageUrl,
-              status: r.log.status, logId: r.log._id,
+              itemName: r.log.itemName,
+              category: r.log.category,
+              binColor: r.log.binColor,
+              points: 0,
+              estimatedKg: r.log.estimatedKg,
+              imageUrl: r.log.imageUrl,
+              status: r.log.status,
+              logId: r.log._id,
               mode: 'photo',
             });
             setStatus(null);
           }}
-          onError={(msg) => { setStatus(null); setErr(msg); }}
-          onStart={() => { setErr(''); setStatus('logging'); }}
+          onError={(msg) => {
+            setStatus(null);
+            setErr(msg);
+          }}
+          onStart={() => {
+            setErr('');
+            setStatus('logging');
+          }}
         />
       </div>
 
+      {/* Error Alert */}
       {err && (
-        <div className="card border-red-600 space-y-1">
-          <p className="text-sm text-red-700">{err}</p>
-          <p className="text-xs text-gray-500">If this keeps failing, confirm your backend is reachable at /api/health.</p>
+        <div className="p-4 rounded-2xl bg-red-50 border border-red-200 text-xs font-semibold text-red-700 flex items-start gap-3">
+          <AlertTriangleIcon className="w-5 h-5 shrink-0" />
+          <div>
+            <p className="font-bold">{err}</p>
+            <p className="text-red-600/80 mt-0.5">Ensure your backend server is active and reachable.</p>
+          </div>
         </div>
       )}
+
     </main>
   );
 }
 
-function Spinner() {
-  return (
-    <svg className="animate-spin h-5 w-5 text-gray-900" viewBox="0 0 24 24" aria-hidden="true">
-      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" fill="none" strokeDasharray="50 18" />
-    </svg>
-  );
-}
-
 const CATEGORIES = [
-  { value: 'wet_organic', label: 'Wet organic (Green bin)' },
-  { value: 'dry_recyclable', label: 'Dry recyclable (Blue bin)' },
-  { value: 'hazardous_ewaste', label: 'Hazardous / E-waste (Red bin)' },
-  { value: 'reject_other', label: 'General / Reject (Black bin)' },
+  { value: 'wet_organic', label: 'Wet Organic (Green Bin)' },
+  { value: 'dry_recyclable', label: 'Dry Recyclable (Blue Bin)' },
+  { value: 'hazardous_ewaste', label: 'Hazardous / E-Waste (Red Bin)' },
+  { value: 'reject_other', label: 'General / Reject (Black Bin)' },
 ];
 
 function CustomForm({ imageUrl, busy, disabled, onLogged, onError, onStart }) {
@@ -294,7 +456,10 @@ function CustomForm({ imageUrl, busy, disabled, onLogged, onError, onStart }) {
   const submit = async (e) => {
     e.preventDefault();
     const trimmed = name.trim();
-    if (!trimmed) { onError('Type the item name first.'); return; }
+    if (!trimmed) {
+      onError('Please type the item name first.');
+      return;
+    }
     onStart();
     try {
       const r = await items.log({
@@ -307,7 +472,7 @@ function CustomForm({ imageUrl, busy, disabled, onLogged, onError, onStart }) {
       setName('');
       onLogged(r);
     } catch (err) {
-      onError(err.response?.data?.error || 'Could not save this item.');
+      onError(err.response?.data?.error || 'Could not log custom item.');
     }
   };
 
@@ -316,7 +481,7 @@ function CustomForm({ imageUrl, busy, disabled, onLogged, onError, onStart }) {
       <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto_auto] gap-3">
         <input
           className="field"
-          placeholder="e.g. coconut shell, takeaway cup, broken mirror"
+          placeholder="e.g. Coconut shell, takeaway coffee cup, broken glass"
           value={name}
           disabled={disabled}
           onChange={e => setName(e.target.value)}
@@ -330,10 +495,17 @@ function CustomForm({ imageUrl, busy, disabled, onLogged, onError, onStart }) {
         >
           {CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
         </select>
-        <button className="btn btn-primary" disabled={disabled || !name.trim()}>{busy ? '...' : 'Log it'}</button>
+        <button
+          className="btn btn-primary"
+          disabled={disabled || !name.trim()}
+        >
+          {busy ? 'Logging...' : 'Log Custom Waste'}
+        </button>
       </div>
       {imageUrl && (
-        <p className="text-xs text-gray-500">The uploaded image will be attached to this entry.</p>
+        <p className="text-xs text-eco-emerald font-semibold">
+          ✓ Your uploaded image will be linked to this custom log.
+        </p>
       )}
     </form>
   );
