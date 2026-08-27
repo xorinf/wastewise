@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { items } from '../api/client';
 import { useAuthStore } from '../store/authStore';
+import { BIN, BIN_KEY } from '../utils/lookups';
 
 const STATUS_TEXT = {
   uploading: 'Uploading to image storage…',
@@ -168,21 +169,44 @@ export default function Identify() {
       )}
 
       {/* Quick-select grid */}
-      <div className="card space-y-3">
-        <h2 className="font-semibold">
-          {inPhotoPickMode ? 'Pick one — photo will be attached' : 'Or quick-select'}
-        </h2>
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
-          {grid.map((it) => (
-            <button
-              key={it.name}
-              disabled={!!status}
-              onClick={() => pickFromGrid(it, inPhotoPickMode ? pendingImageUrl : '')}
-              className={`btn !text-sm !py-2 ${inPhotoPickMode ? 'border-2 border-gray-900' : ''}`}
-            >
-              {it.name}
-            </button>
+      <div className="card space-y-4">
+        <div>
+          <h2 className="font-semibold">
+            {inPhotoPickMode ? 'Pick one — photo will be attached' : 'Or quick-select'}
+          </h2>
+          <p className="text-xs text-gray-500">Each tap logs the item and awards +10 points. The colored dot shows which bin it goes to.</p>
+        </div>
+
+        {/* Bin color key — teaches the visual grammar in one glance */}
+        <div className="flex flex-wrap gap-2 text-xs">
+          {BIN_KEY.map(k => (
+            <span key={k.category} className="inline-flex items-center gap-1.5 px-2 py-1 border border-gray-200 rounded">
+              <span className="inline-block w-3 h-3 rounded-full" style={{ background: k.color }} />
+              <strong className="text-gray-700">{k.textColor}</strong>
+              <span className="text-gray-500">· {k.label}</span>
+            </span>
           ))}
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+          {grid.map((it) => {
+            const bin = BIN[it.category] || {};
+            const swatch = BIN_KEY.find(k => k.category === it.category);
+            return (
+              <button
+                key={it.name}
+                disabled={!!status}
+                onClick={() => pickFromGrid(it, inPhotoPickMode ? pendingImageUrl : '')}
+                className={`group flex flex-col items-start text-left border border-gray-300 rounded-md px-3 py-2 bg-white hover:border-gray-900 disabled:opacity-50 disabled:cursor-not-allowed transition ${inPhotoPickMode ? 'border-2 border-gray-900' : ''}`}
+              >
+                <span className="flex items-center gap-2">
+                  <span className="inline-block w-2.5 h-2.5 rounded-full shrink-0" style={{ background: swatch?.color }} />
+                  <span className="font-medium text-sm text-gray-900">{it.name}</span>
+                </span>
+                <span className="text-xs text-gray-500 mt-1">→ {bin.color || '—'} bin</span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
