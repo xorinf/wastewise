@@ -1,0 +1,5 @@
+node_modules
+.git
+.mongo-data
+*.log
+.DS_Store
