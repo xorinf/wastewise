@@ -4,21 +4,28 @@ import Campus from '../../models/Campus.js';
 
 const CAMPUS_COLL = Campus.collection.name; // ponytail: Mongoose pluralizes to 'campus' — never hard-code the plural.
 
+/** Wrap a campusFilter in a query clause, or {} if no filter. NEVER pass {} as a
+ *  field value — Mongoose tries to ObjectId-cast it and throws. */
+function campusClause(campusFilter) {
+  if (!campusFilter || (Array.isArray(campusFilter?.$in) && campusFilter.$in.length === 0)) return {};
+  return { campusId: campusFilter };
+}
+
 export async function dashboard(req, res) {
-  let campusFilter = {};
+  let campusFilter = null;
   if (req.user.role === 'staff') {
     const campuses = await Campus.find({ 'zoneStaff.staffUserIds': req.user._id }, '_id');
     campusFilter = { $in: campuses.map(c => c._id) };
   } else if (req.query.campusId) {
     campusFilter = req.query.campusId;
   }
-  const reqMatch = campusFilter && campusFilter.$in ? { campusId: campusFilter } : (campusFilter ? { campusId: campusFilter } : {});
+  const reqMatch = campusClause(campusFilter);
 
   const [byStatus, byType, byFill, recentLogs, recentReqs] = await Promise.all([
     PickupRequest.aggregate([{ $match: reqMatch }, { $group: { _id: '$status', n: { $sum: 1 } } }]),
     PickupRequest.aggregate([{ $match: reqMatch }, { $group: { _id: '$requestType', n: { $sum: 1 } } }]),
     PickupRequest.aggregate([{ $match: { ...reqMatch, status: { $in: ['pending', 'assigned'] } } }, { $group: { _id: '$fillStatus', n: { $sum: 1 } } }]),
-    DisposalLog.find(campusFilter && campusFilter.$in ? { campusId: campusFilter } : (campusFilter ? { campusId: campusFilter } : {})).sort({ createdAt: -1 }).limit(20),
+    DisposalLog.find(reqMatch).sort({ createdAt: -1 }).limit(20),
     PickupRequest.find(reqMatch).sort({ createdAt: -1 }).limit(20),
   ]);
 
