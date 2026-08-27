@@ -287,7 +287,6 @@ const CATEGORIES = [
 ];
 
 function CustomForm({ imageUrl, busy, disabled, onLogged, onError, onStart }) {
-  const { selectedCampusId } = useAuthStore();
   const [name, setName] = useState('');
   const [category, setCategory] = useState('dry_recyclable');
 
@@ -295,6 +294,11 @@ function CustomForm({ imageUrl, busy, disabled, onLogged, onError, onStart }) {
     e.preventDefault();
     const trimmed = name.trim();
     if (!trimmed) { onError('Type the item name first.'); return; }
+    // ponytail: read selectedCampusId from the store at submit time, not at
+    // mount, so the form works when the user selects a campus after the
+    // component has already rendered.
+    const { selectedCampusId } = useAuthStore.getState();
+    if (!selectedCampusId) { onError('Pick a campus first (top right).'); return; }
     onStart();
     try {
       const r = await items.log({
