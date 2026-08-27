@@ -9,7 +9,10 @@ export const useAuthStore = create((set, get) => ({
   setSession: ({ token, user }) => {
     localStorage.setItem('wastewise.token', token);
     localStorage.setItem('wastewise.user', JSON.stringify(user));
-    const campusId = user?.campusIds?.[0]?.toString?.() || user?.campusIds?.[0] || null;
+    const firstCampus = user?.campusIds?.[0];
+    const campusId = typeof firstCampus === 'string'
+      ? firstCampus
+      : firstCampus?.toString?.() || firstCampus?._id || null;
     if (campusId) localStorage.setItem('wastewise.campusId', campusId);
     set({ token, user, selectedCampusId: campusId || get().selectedCampusId });
   },
@@ -17,6 +20,17 @@ export const useAuthStore = create((set, get) => ({
   setSelectedCampus: (id) => {
     localStorage.setItem('wastewise.campusId', id);
     set({ selectedCampusId: id });
+  },
+
+  // Add a campus to the logged-in user and select it as the active campus.
+  // Used by the navbar "Link campus" prompt when a user is on 0 campuses.
+  linkCampus: async (code) => {
+    const { user } = await authApi.linkCampus({ code });
+    const next = user.campusIds?.[0];
+    const campusId = typeof next === 'string' ? next : next?.toString?.() || next?._id;
+    if (campusId) localStorage.setItem('wastewise.campusId', campusId);
+    set({ user, selectedCampusId: campusId || get().selectedCampusId });
+    return user;
   },
 
   refresh: async () => {

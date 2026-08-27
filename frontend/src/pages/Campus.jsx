@@ -201,7 +201,7 @@ export default function Campus() {
   }, [pins, canDropPin]);
 
   if (!selectedCampusId) {
-    return <main className="max-w-2xl mx-auto p-8"><p className="text-gray-700">Pick a campus first (top right).</p></main>;
+    return <CampusLinkPrompt />;
   }
   if (!campus) {
     return <main className="max-w-4xl mx-auto p-8"><p className="text-gray-600">Loading…</p></main>;
@@ -295,5 +295,49 @@ function computeCentroid(bins) {
 
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+}
+
+/** Inline form shown when the user has no campus selected. Lets them link an
+ *  existing campus by code. Subsequent reload persists via localStorage in
+ *  the auth store. */
+function CampusLinkPrompt() {
+  const linkCampus = useAuthStore(s => s.linkCampus);
+  const [code, setCode] = useState('');
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    const trimmed = code.trim();
+    if (!trimmed) { setErr('Enter a campus code (try MAIN)'); return; }
+    setBusy(true); setErr('');
+    try {
+      await linkCampus(trimmed);
+    } catch (e2) {
+      setErr(e2.response?.data?.error || 'Could not link');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <main className="max-w-md mx-auto p-8 space-y-4">
+      <h1 className="text-2xl font-bold">Link a campus</h1>
+      <p className="text-sm text-gray-600">
+        You aren't linked to any campus yet. Enter the campus code your admin shared with you (e.g. <code>MAIN</code>) and we'll wire you up.
+      </p>
+      <form onSubmit={submit} className="flex gap-2">
+        <input
+          className="field"
+          placeholder="campus code"
+          value={code}
+          onChange={e => setCode(e.target.value)}
+          maxLength={20}
+        />
+        <button className="btn btn-primary" disabled={busy}>{busy ? '...' : 'Link'}</button>
+      </form>
+      {err && <p className="text-sm text-red-700">{err}</p>}
+    </main>
+  );
 }
 
