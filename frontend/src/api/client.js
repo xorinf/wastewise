@@ -38,6 +38,8 @@ export const campuses = {
   get:   id   => api.get(`/campuses/${id}`).then(r => r.data),
   create: body => api.post('/campuses', body).then(r => r.data),
   addBin: (id, body) => api.post(`/campuses/${id}/bins`, body).then(r => r.data),
+  deleteBin: (id, building, floor, binId) =>
+    api.delete(`/campuses/${id}/bins/${encodeURIComponent(building)}/${encodeURIComponent(floor)}/${encodeURIComponent(binId)}`).then(r => r.data),
   setBinCoords: (id, building, floor, binId, lat, lng) =>
     api.post(`/campuses/${id}/bins/${encodeURIComponent(building)}/${encodeURIComponent(floor)}/${encodeURIComponent(binId)}/coords`, { lat, lng }).then(r => r.data),
   setCampusBounds: (id, bounds) =>

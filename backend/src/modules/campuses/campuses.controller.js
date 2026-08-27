@@ -68,6 +68,22 @@ export async function addBin(req, res) {
   return res.json({ campus: doc });
 }
 
+/** DELETE /api/campuses/:id/bins/:building/:floor/:binId - admin only.
+ *  Removes a bin by its building+floor+binId triple. */
+export async function deleteBin(req, res) {
+  const doc = await Campus.findById(req.params.id);
+  if (!doc) return res.status(404).json({ error: 'Not found' });
+  const before = doc.bins.length;
+  doc.bins = doc.bins.filter(
+    b => !(b.building === req.params.building && b.floor === req.params.floor && b.binId === req.params.binId)
+  );
+  if (doc.bins.length === before) {
+    return res.status(404).json({ error: 'Bin not found at that location' });
+  }
+  await doc.save();
+  return res.json({ campus: doc });
+}
+
 /** Set coords for a specific bin (matched by building+floor+binId) in one shot. */
 export async function setBinCoords(req, res) {
   const { lat, lng } = req.body || {};
