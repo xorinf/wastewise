@@ -144,6 +144,9 @@ export async function logDisposal(req, res) {
   const bin = binFor(category);
   if (!bin) return res.status(400).json({ error: 'Unknown category' });
 
+  // Insert as 'pending' - points + itemsLogged only credit when the user
+  // confirms the disposal via /verify/:id. Idempotent: the verify step
+  // does the math, so we never double-count at log time.
   const log = await DisposalLog.create({
     userId: req.user._id,
     campusId,
@@ -154,9 +157,31 @@ export async function logDisposal(req, res) {
     estimatedKg: kgFor(category),
     imageUrl,
     source,
+    status: 'pending',
   });
-  await User.updateOne({ _id: req.user._id }, { $inc: { points: POINTS_PER_LOG, itemsLogged: 1 } });
-  return res.status(201).json({ log, points: POINTS_PER_LOG });
+  return res.status(201).json({ log, points: 0 });
+}
+
+/** POST /api/items/verify/:id
+ *  Marks a pending DisposalLog as verified, then increments user.points and
+ *  user.itemsLogged. Returns the updated log + the points awarded. */
+export async function verifyLog(req, res) {
+  const log = await DisposalLog.findById(req.params.id);
+  if (!log) return res.status(404).json({ error: 'Not found' });
+  if (log.userId.toString() !== req.user._id.toString()) {
+    return res.status(403).json({ error: 'Cannot verify another user\'s log' });
+  }
+  if (log.status === 'verified') {
+    return res.json({ log, points: 0, alreadyVerified: true });
+  }
+  log.status = 'verified';
+  log.verifiedAt = new Date();
+  await log.save();
+  await User.updateOne(
+    { _id: req.user._id },
+    { $inc: { points: log.pointsEarned, itemsLogged: 1 } }
+  );
+  return res.json({ log, points: log.pointsEarned, alreadyVerified: false });
 }
 
 export async function myHistory(req, res) {
@@ -165,8 +190,10 @@ export async function myHistory(req, res) {
 }
 
 export async function myStats(req, res) {
+  // Only verified logs count toward the impact stat - matches the user's
+  // "in the bin yet" workflow: claimed items don't move the bar.
   const agg = await DisposalLog.aggregate([
-    { $match: { userId: req.user._id } },
+    { $match: { userId: req.user._id, status: 'verified' } },
     { $group: { _id: null, total: { $sum: 1 }, kg: { $sum: '$estimatedKg' } } },
   ]);
   const { total = 0, kg = 0 } = agg[0] || {};

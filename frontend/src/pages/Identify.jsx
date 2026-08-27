@@ -57,7 +57,7 @@ export default function Identify() {
         itemName: r.itemName, category: r.category, campusId: selectedCampusId,
         source: 'upload', imageUrl: r.imageUrl || '',
       });
-      setResult({ ...r, mode: 'photo', logId: log.log?._id });
+      setResult({ ...r, mode: 'photo', logId: log.log?._id, status: log.log?.status, points: 0 });
       setStatus(null);
     } catch (e) {
       setErr(e.response?.data?.error || e.message || 'Upload failed');
@@ -82,12 +82,25 @@ export default function Identify() {
         itemName: item.name, category: item.category,
         binColor: r.log.binColor, points: r.points,
         estimatedKg: r.log.estimatedKg, imageUrl: r.log.imageUrl,
+        status: r.log.status, logId: r.log._id,
         mode: 'photo',
       });
     } catch (e) {
       setErr(e.response?.data?.error || 'Logging failed');
     } finally {
       setStatus(null);
+    }
+  };
+
+  // After verification, the "Mark disposed" button hits /verify/:id.
+  // The points + kg bar moves on My Impact once this returns.
+  const verify = async () => {
+    if (!result?.logId) return;
+    try {
+      const r = await items.verify(result.logId);
+      setResult(prev => ({ ...prev, status: 'verified', points: (prev.points || 0) + (r.points || 0) }));
+    } catch (e) {
+      setErr(e.response?.data?.error || 'Could not verify');
     }
   };
 
@@ -158,10 +171,25 @@ export default function Identify() {
             </div>
           )}
 
-          {result.logId && (
-            <p className="text-xs text-gray-500">
-              Logged. <Link to="/history" className="underline">See in My Impact</Link>
-            </p>
+          {/* Pending -> ask the user to confirm they actually disposed of it.
+             Verified -> show confirmation. The flow: identify -> walk to bin ->
+             tap "In the bin!" -> stats move. */}
+          {result.logId && result.status === 'pending' && (
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-200 pt-3">
+              <p className="text-sm text-gray-700">
+                Walk to the <strong>{result.binColor}</strong> bin and tap <strong>In the bin</strong> to credit +10 pts.
+              </p>
+              <button className="btn btn-primary" onClick={verify}>In the bin ✓</button>
+            </div>
+          )}
+
+          {result.logId && result.status === 'verified' && (
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-200 pt-3">
+              <p className="text-sm text-gray-700">
+                Verified. <Link to="/history" className="underline">See in My Impact</Link>
+              </p>
+              <span className="chip">+{result.points || 10} pts</span>
+            </div>
           )}
 
           <button className="btn !text-sm" onClick={reset}>Identify another</button>
@@ -221,8 +249,9 @@ export default function Identify() {
           onLogged={(r) => {
             setResult({
               itemName: r.log.itemName, category: r.log.category,
-              binColor: r.log.binColor, points: r.points,
+              binColor: r.log.binColor, points: 0,
               estimatedKg: r.log.estimatedKg, imageUrl: r.log.imageUrl,
+              status: r.log.status, logId: r.log._id,
               mode: 'photo',
             });
             setStatus(null);

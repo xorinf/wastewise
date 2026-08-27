@@ -11,6 +11,7 @@ import itemIdRoutes from './modules/itemId/itemId.routes.js';
 import pickupRoutes from './modules/pickupRequests/pickupRequests.routes.js';
 import campusRoutes from './modules/campuses/campuses.routes.js';
 import staffRoutes from './modules/staffDashboard/staffDashboard.routes.js';
+import pinRoutes from './modules/pins/pins.routes.js';
 
 const app = express();
 
@@ -24,6 +25,7 @@ app.use('/api/items', itemIdRoutes);
 app.use('/api/requests', pickupRoutes);
 app.use('/api/campuses', campusRoutes);
 app.use('/api/staff', staffRoutes);
+app.use('/api/pins', pinRoutes);
 
 app.use((err, _req, res, _next) => {
   console.error('[err]', err.message);

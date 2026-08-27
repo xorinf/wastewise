@@ -18,6 +18,9 @@ const DisposalLogSchema = new mongoose.Schema(
     estimatedKg: { type: Number, default: 0 },
     imageUrl: { type: String, default: '' },
     source: { type: String, enum: ['upload', 'quick_select', 'custom'], required: true },
+    // ponytail: rows start as 'pending' - points + itemsLogged only credit when verified.
+    status: { type: String, enum: ['pending', 'verified'], default: 'pending' },
+    verifiedAt: { type: Date, default: null },
   },
   { timestamps: true }
 );

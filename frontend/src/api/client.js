@@ -21,6 +21,7 @@ export const items = {
   quickSelect: ()       => api.get('/items/quick-select').then(r => r.data),
   identify:    formData => api.post('/items/identify', formData).then(r => r.data),
   log:         body     => api.post('/items/log', body).then(r => r.data),
+  verify:      id       => api.post(`/items/verify/${id}`).then(r => r.data),
   history:     ()       => api.get('/items/history').then(r => r.data),
   stats:       ()       => api.get('/items/stats').then(r => r.data),
 };
@@ -42,6 +43,21 @@ export const campuses = {
   setCampusBounds: (id, bounds) =>
     api.patch(`/campuses/${id}/bounds`, bounds).then(r => r.data),
   mapZoneStaff: (id, body) => api.post(`/campuses/${id}/zone-staff`, body).then(r => r.data),
+  nearestBin: (id, lat, lng) => {
+    const params = lat != null && lng != null ? `?lat=${lat}&lng=${lng}` : '';
+    return api.get(`/campuses/${id}/nearest-bin${params}`).then(r => r.data);
+  },
+};
+
+export const pins = {
+  listByCampus: (campusId, status) => {
+    const params = new URLSearchParams({ campusId, ...(status ? { status } : {}) });
+    return api.get(`/pins?${params}`).then(r => r.data);
+  },
+  nearest: (campusId, lat, lng) =>
+    api.get(`/pins/nearest?campusId=${campusId}&lat=${lat}&lng=${lng}`).then(r => r.data),
+  create: body => api.post('/pins', body).then(r => r.data),
+  setStatus: (id, status) => api.patch(`/pins/${id}/status`, { status }).then(r => r.data),
 };
 
 export const staff = {
